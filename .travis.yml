@@ -27,6 +27,7 @@ cache:
     # https://stackoverflow.com/questions/39930171/cache-brew-builds-with-travis-ci
     - $HOME/Library/Caches/Homebrew
     - /usr/local/Homebrew/
+    - /usr/local/Cellar/
 
 
 script: |
