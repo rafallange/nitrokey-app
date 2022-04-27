@@ -81,6 +81,38 @@ const auto Warning_devices_clock_not_desynchronized =
 const auto Tray_location_msg = /*"\n" +*/ QT_TRANSLATE_NOOP("MainWindow", "You can find application’s tray icon in system tray in "
                                       "the right down corner of your screen (Windows) or in the upper right (Linux, MacOS).");
 
+QString MainWindow::convertToTimeUnits(int seconds){
+  QString converted = "N/A";
+
+  if (seconds > -1){
+    converted = "";
+    const int days = seconds / (24 * 60 * 60);
+    seconds -= days * (24 * 60 * 60);
+    const int hours = seconds / (60 * 60);
+    seconds -= hours * (60 * 60);
+    const int minutes = seconds / (60);
+    seconds -= minutes * (60);
+
+    if (days > 0){
+      converted = QString("%1 %2 ").arg(days).arg(tr("d"));
+    }
+
+    if (hours > 0 || (converted.length()>0 && (minutes > 0 || seconds > 0))){
+      converted += QString("%1 %2 ").arg(hours).arg(tr("h"));
+    }
+
+    if (minutes > 0 || (converted.length()>0 && seconds > 0)) {
+      converted += QString("%1 %2 ").arg(minutes).arg(tr("min"));
+    }
+
+    if (seconds > 0 || converted.length()==0){
+      converted += QString("%1 %2").arg(seconds).arg(tr("s"));
+    }
+  }
+
+  return converted;
+}
+
 void MainWindow::load_settings_page(){
     QSettings settings;
     const auto first_run_key = "main/first_run";
@@ -99,6 +131,27 @@ void MainWindow::load_settings_page(){
     }
     ui->combo_languages->addItem(tr("current:") +" "+ lang_selected, lang_selected);
     ui->combo_languages->setCurrentText(tr("current:") +" "+ lang_selected);
+
+    const auto autolock_key = "main/autolock_timeout";
+    auto autolock_selected = settings.value(autolock_key, -1).toInt();
+
+    ui->combo_autolock->clear();
+    ui->combo_autolock->addItem(tr("off"), -1);
+    ui->combo_autolock->addItem(tr("10 s"), (10));
+    ui->combo_autolock->addItem(tr("1 min"), (1*60));
+    ui->combo_autolock->addItem(tr("5 min"), (5*60));
+    ui->combo_autolock->addItem(tr("1 h"), (60*60));
+    ui->combo_autolock->addItem(tr("8 h"), (8*60*60));
+    ui->combo_autolock->addItem(tr("1 d"), (24*60*60));
+
+    if (autolock_selected==-1) {
+      ui->combo_autolock->addItem(tr("current:") +" "+ tr("off"), -1);
+      ui->combo_autolock->setCurrentText(tr("current:") +" "+ tr("off"));
+    }
+    else {
+      ui->combo_autolock->addItem(tr("current:") + " " + convertToTimeUnits(autolock_selected), autolock_selected);
+      ui->combo_autolock->setCurrentText(tr("current:") + " " + convertToTimeUnits(autolock_selected));
+    }
 
     ui->edit_debug_file_path->setText(settings.value("debug/file", "").toString());
     ui->spin_debug_verbosity->setValue(settings.value("debug/level", 2).toInt());
@@ -169,6 +222,7 @@ MainWindow::MainWindow(QWidget *parent):
 
   connect(this, SIGNAL(PWS_unlocked()), &tray, SLOT(regenerateMenu()));
   connect(this, SIGNAL(PWS_unlocked()), this, SLOT(SetupPasswordSafeConfig()));
+  connect(this, SIGNAL(PWS_unlocked()), this, SLOT(SetupAutolockTimer()));
   connect(this, SIGNAL(DeviceLocked()), this, SLOT(SetupPasswordSafeConfig()));
   connect(&storage, SIGNAL(storageStatusChanged()), this, SLOT(SetupPasswordSafeConfig()));
   connect(&storage, SIGNAL(storageStatusChanged()), this, SLOT(storage_check_symlink()));
@@ -249,7 +303,7 @@ MainWindow::MainWindow(QWidget *parent):
 
   // Connect dial page
   connect(ui->btn_dial_PWS, SIGNAL(clicked()), this, SLOT(PWS_Clicked_EnablePWSAccess()));
-  connect(ui->btn_dial_lock, SIGNAL(clicked()), this, SLOT(startLockDeviceAction()));  
+  connect(ui->btn_dial_lock, SIGNAL(clicked()), this, SLOT(startLockDeviceAction()));
   connect(ui->btn_dial_EV, SIGNAL(clicked()), &storage, SLOT(startStick20EnableCryptedVolume()));
   connect(ui->btn_dial_help, SIGNAL(clicked()), this, SLOT(startHelpAction()));
   connect(ui->btn_dial_HV, SIGNAL(clicked()), &storage, SLOT(startStick20EnableHiddenVolume()));
@@ -887,7 +941,7 @@ void MainWindow::on_hexRadioButton_toggled(bool checked) {
 
   QString secret_input = getOTPSecretCleaned(ui->secretEdit->text());
   ui->secretEdit->setText(secret_input);
-  
+
   auto secret = secret_input.toLatin1().toStdString();
   if (secret.size() != 0) {
     try{
@@ -1238,6 +1292,21 @@ void MainWindow::SetupPasswordSafeConfig(void) {
   ui->PWS_EditPassword->setEchoMode(QLineEdit::Password);
 }
 
+void MainWindow::SetupAutolockTimer(void) {
+
+  if (ui->combo_autolock->currentData().canConvert(QMetaType::Int)) {
+    int timeoutNumber = ui->combo_autolock->currentData().toInt();
+
+    if (timeoutNumber > 0) {
+      QString log = "Firing some other timer " + timeoutNumber;
+      LOG(log.toStdString(), nitrokey::log::Loglevel::INFO);
+      QTimer::singleShot(timeoutNumber * 1000, this, SLOT(startLockDeviceAction()));
+    }
+  }
+
+  LOG("bye bye ", nitrokey::log::Loglevel::INFO);
+}
+
 void MainWindow::on_PWS_ButtonClearSlot_clicked() {
   const auto item_number = ui->PWS_ComboBoxSelectSlot->currentIndex();
   const int slot_number = item_number - 1;
@@ -1400,6 +1469,7 @@ void MainWindow::PWS_Clicked_EnablePWSAccess() {
       nm::instance()->enable_password_safe(user_password.c_str());
       tray.showTrayMessage(tr("Password safe unlocked"));
       PWS_Access = true;
+      LOGD("#RL: unlocking");
       emit PWS_unlocked();
       return;
     }
@@ -1831,6 +1901,7 @@ void MainWindow::on_btn_writeSettings_clicked()
     settings.setValue("main/close_main_on_connection", ui->cb_hide_main_window_on_connection->isChecked());
     settings.setValue("main/hide_on_close", ui->cb_hide_main_window_on_close->isChecked());
     settings.setValue("main/show_on_start", ui->cb_show_window_on_start->isChecked());
+    settings.setValue("main/autolock_timeout", ui->combo_autolock->currentData());
 
     settings.setValue("storage/check_symlink", ui->cb_check_symlink->isChecked());
 

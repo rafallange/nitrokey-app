@@ -166,6 +166,7 @@ private slots:
 
   // Functions for password safe
   void SetupPasswordSafeConfig(void);
+  void SetupAutolockTimer(void);
 
   void on_eraseButton_clicked();
   void on_randomSecretButton_clicked();
@@ -232,6 +233,7 @@ private:
   unsigned int roundToNextMultiple(const int number, const int multipleOf) const;
 
   QString getOTPSecretCleaned(QString secret_input);
+  QString convertToTimeUnits(int seconds);
 
   void make_UI_enabled(bool enabled);
 };
